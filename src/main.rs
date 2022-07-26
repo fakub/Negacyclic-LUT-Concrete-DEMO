@@ -4,8 +4,11 @@ use std::path::Path;
 
 use bincode;
 
+// parallelization tools
 #[allow(unused_imports)]
 use rayon::prelude::*;
+#[allow(unused_imports)]
+use crossbeam_utils::thread;
 
 use concrete_core::prelude::*;
 
@@ -63,6 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // create fresh engine (cannot be serialized)
     let mut engine = CoreEngine::new(())?;
+    //TODO
+    let mut engine2= CoreEngine::new(())?;
     let var_lwe = Variance(params.lwe_modular_std_dev.get_variance());
     // let var_rlwe = Variance(params.glwe_modular_std_dev.get_variance());
 
@@ -107,10 +112,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let accumulator = create_accum(func, &bootstrapping_key, bit_precision, &mut engine)?;
 
     // -------------------------------------------------------------------------
-    //  Run PBS
+    //  Run PBS in parallel
     //
-    //TODO parallel iterator fails to compile
+    //  VARIANT A    ===========================================================
+    //
+    // standard iterator works well
     for ci in cv.iter_mut() {
+    //FIXME parallel iterator fails to compile
     //~ for ci in cv.par_iter_mut() {
         // init buffer
         let zero_plaintext = engine.create_plaintext(&0_u64)?;
@@ -132,6 +140,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &bootstrapping_key,
         )?;
     }
+    //
+    //  VARIANT B    ===========================================================
+    //
+    // however, this works fine
+    let mut c0 = cv[0].clone();
+    let mut c1 = cv[1].clone();
+    thread::scope(|pbs_scope| {
+        pbs_scope.spawn(|_| {
+            // init buffer
+            let zero_plaintext = engine.create_plaintext(&0_u64).expect("pbs_scope.spawn failed.");
+            let mut buffer_lwe_after_pbs = engine.trivially_encrypt_lwe_ciphertext(
+                key_switching_key.output_lwe_dimension().to_lwe_size(),
+                &zero_plaintext,
+            ).expect("pbs_scope.spawn failed.");
+            // Compute a key switch
+            engine.discard_keyswitch_lwe_ciphertext(
+                &mut buffer_lwe_after_pbs,
+                &mut c0,
+                &key_switching_key,
+            ).expect("pbs_scope.spawn failed.");
+            // Compute a bootstrap
+            engine.discard_bootstrap_lwe_ciphertext(
+                &mut c0,
+                &buffer_lwe_after_pbs,
+                &accumulator,
+                &bootstrapping_key,
+            ).expect("pbs_scope.spawn failed.");
+        });
+        pbs_scope.spawn(|_| {
+            // init buffer
+            let zero_plaintext = engine2.create_plaintext(&0_u64).expect("pbs_scope.spawn failed.");
+            let mut buffer_lwe_after_pbs = engine2.trivially_encrypt_lwe_ciphertext(
+                key_switching_key.output_lwe_dimension().to_lwe_size(),
+                &zero_plaintext,
+            ).expect("pbs_scope.spawn failed.");
+            // Compute a key switch
+            engine2.discard_keyswitch_lwe_ciphertext(
+                &mut buffer_lwe_after_pbs,
+                &mut c1,
+                &key_switching_key,
+            ).expect("pbs_scope.spawn failed.");
+            // Compute a bootstrap
+            engine2.discard_bootstrap_lwe_ciphertext(
+                &mut c1,
+                &buffer_lwe_after_pbs,
+                &accumulator,
+                &bootstrapping_key,
+            ).expect("pbs_scope.spawn failed.");
+        });
+    }).expect("thread::scope pbs_scope failed.");
+    //
+    // =========================================================================
 
     // -------------------------------------------------------------------------
     //  Decrypt
