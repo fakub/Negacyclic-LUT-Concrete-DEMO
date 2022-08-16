@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -------------------------------------------------------------------------
     //  Run PBS in parallel
     //
-    //  VARIANT A    ===========================================================
+    //  VARIANT A.0    =========================================================
     //
     // standard iterator works well
     for ci in cv.iter_mut() {
@@ -139,6 +139,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &accumulator,
             &bootstrapping_key,
         )?;
+    }
+    //
+    //  VARIANT A.1    =========================================================
+    //
+    let result = cv.par_iter_mut().map(|ci| {
+        let mut engine = CoreEngine::new(())?;
+        let zero_plaintext = engine.create_plaintext(&0_u64)?;
+        let mut buffer_lwe_after_pbs = engine.trivially_encrypt_lwe_ciphertext(
+            key_switching_key.output_lwe_dimension().to_lwe_size(),
+            &zero_plaintext,
+        )?;
+        // Compute a key switch
+        engine.discard_keyswitch_lwe_ciphertext(
+            &mut buffer_lwe_after_pbs,
+            ci,
+            &key_switching_key,
+        )?;
+        // Compute a bootstrap
+        engine.discard_bootstrap_lwe_ciphertext(
+            ci,
+            &buffer_lwe_after_pbs,
+            &accumulator,
+            &bootstrapping_key,
+        )?;
+        Ok(())
+    }).collect::<Result<(), Box<dyn std::error::Error + Send + Sync>>>();
+    if let Err(e) = result {
+        // 'convert' our  Box<dyn std::error::Error + Send + Sync>
+        // into a Box<dyn std::error::Error>, as that's what main() returns
+        return Err(e);
     }
     //
     //  VARIANT B    ===========================================================
