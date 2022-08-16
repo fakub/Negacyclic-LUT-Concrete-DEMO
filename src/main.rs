@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bit_precision = 5;
     let delta = 1 << (64 - bit_precision);
     let mut enc_mv = Vec::new();
-        println!("\nMessages & Encoding:");
+    println!("\nMessages & Encoding:");
     for mi in mv {
         enc_mv.push(mi * delta);
         println!("mi = {} encoded as {:#066b}", mi, mi * delta);
